@@ -1,5 +1,4 @@
 {
-  "/api/feedback/route": "app/api/feedback/route.js",
-  "/api/memory/route": "app/api/memory/route.js",
-  "/api/next-ad/route": "app/api/next-ad/route.js"
+  "/get-started/page": "app/get-started/page.js",
+  "/page": "app/page.js"
 }
