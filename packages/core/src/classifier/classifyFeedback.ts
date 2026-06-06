@@ -7,7 +7,9 @@ import type {
 /**
  * Deterministic mapping from button signal to friction analysis.
  * Source of truth: AGENTS.md §10. voiceText is intentionally ignored in this
- * build — Tavus Raven-1 handles emotion perception via webhook tool calls.
+ * build — Tavus Raven-1 handles emotion perception. Its tool calls arrive in
+ * the browser via Daily.js and are mapped to a buttonSignal before reaching
+ * this function through /api/feedback.
  */
 const SIGNAL_MAP: Record<ButtonSignal, FrictionAnalysis> = {
   too_long: {
