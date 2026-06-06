@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@ads/core": "*",
-    "@upstash/redis": "^1.34.3"
+    "@redis-iris/agent-memory": "^0.0.5"
   },
   "devDependencies": {
     "typescript": "^5",

@@ -1,16 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  _resetMemoryProvider,
-  getMemoryProvider,
+  _resetAgentMemoryProvider,
+  getAgentMemoryProvider,
+  isRedisIrisConfigured,
 } from "../src/redis";
 
 const KEYS = [
-  "UPSTASH_REDIS_REST_URL",
-  "UPSTASH_REDIS_REST_TOKEN",
+  "REDIS_IRIS_SERVER_URL",
+  "REDIS_IRIS_STORE_ID",
+  "REDIS_IRIS_API_KEY",
   "NEXT_PUBLIC_REDIS_ENABLED",
 ] as const;
 
-describe("getMemoryProvider", () => {
+describe("isRedisIrisConfigured", () => {
   const original: Partial<Record<(typeof KEYS)[number], string>> = {};
 
   beforeEach(() => {
@@ -18,7 +20,7 @@ describe("getMemoryProvider", () => {
       original[key] = process.env[key];
       delete process.env[key];
     }
-    _resetMemoryProvider();
+    _resetAgentMemoryProvider();
   });
 
   afterEach(() => {
@@ -29,25 +31,47 @@ describe("getMemoryProvider", () => {
         process.env[key] = original[key];
       }
     }
-    _resetMemoryProvider();
+    _resetAgentMemoryProvider();
   });
 
-  it("falls back to InMemoryProvider when UPSTASH env vars are unset", () => {
-    const provider = getMemoryProvider();
-    expect(provider.name).toBe("memory");
+  it("returns false when Redis Iris env vars are unset", () => {
+    expect(isRedisIrisConfigured()).toBe(false);
   });
 
-  it("falls back to InMemoryProvider when NEXT_PUBLIC_REDIS_ENABLED is not 'true' even if creds present", () => {
-    process.env.UPSTASH_REDIS_REST_URL = "https://example.upstash.io";
-    process.env.UPSTASH_REDIS_REST_TOKEN = "fake-token";
+  it("returns false when NEXT_PUBLIC_REDIS_ENABLED is not 'true' even if creds present", () => {
+    process.env.REDIS_IRIS_SERVER_URL = "https://iris.example.com";
+    process.env.REDIS_IRIS_STORE_ID = "store-1";
+    process.env.REDIS_IRIS_API_KEY = "key-1";
     process.env.NEXT_PUBLIC_REDIS_ENABLED = "false";
-    const provider = getMemoryProvider();
+    expect(isRedisIrisConfigured()).toBe(false);
+  });
+
+  it("returns true when all Redis Iris env vars are set and enabled", () => {
+    process.env.REDIS_IRIS_SERVER_URL = "https://iris.example.com";
+    process.env.REDIS_IRIS_STORE_ID = "store-1";
+    process.env.REDIS_IRIS_API_KEY = "key-1";
+    process.env.NEXT_PUBLIC_REDIS_ENABLED = "true";
+    expect(isRedisIrisConfigured()).toBe(true);
+  });
+});
+
+describe("getAgentMemoryProvider", () => {
+  beforeEach(() => {
+    _resetAgentMemoryProvider();
+  });
+
+  afterEach(() => {
+    _resetAgentMemoryProvider();
+  });
+
+  it("returns the in-memory session provider", () => {
+    const provider = getAgentMemoryProvider();
     expect(provider.name).toBe("memory");
   });
 
   it("returns the same instance across calls (singleton)", () => {
-    const a = getMemoryProvider();
-    const b = getMemoryProvider();
+    const a = getAgentMemoryProvider();
+    const b = getAgentMemoryProvider();
     expect(a).toBe(b);
   });
 });

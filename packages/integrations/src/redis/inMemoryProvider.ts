@@ -1,23 +1,29 @@
 import type {
+  ArcEntry,
   MemoryUpdate,
   NextAdDecision,
   PreferenceMemory,
   ViewerFeedback,
 } from "@ads/core";
-import type { MemoryProvider } from "./types";
 
 interface SessionRecord {
   mode: MemoryUpdate["currentMode"];
   preferences: PreferenceMemory[];
+  arc: ArcEntry[];
   feedback: ViewerFeedback[];
   nextAd?: NextAdDecision;
 }
 
 function emptyRecord(): SessionRecord {
-  return { mode: "normal", preferences: [], feedback: [] };
+  return { mode: "normal", preferences: [], arc: [], feedback: [] };
 }
 
-export class InMemoryProvider implements MemoryProvider {
+/**
+ * Process-local fallback when Redis Iris is unset or unreachable. Session
+ * state (feedback log, interruption mode, next-ad cache) shares the same store
+ * as arc entries and preferences.
+ */
+export class InMemoryProvider {
   readonly name = "memory" as const;
   private readonly store = new Map<string, SessionRecord>();
 
@@ -30,15 +36,27 @@ export class InMemoryProvider implements MemoryProvider {
     return r;
   }
 
-  async getPreferences(sessionId: string): Promise<PreferenceMemory[]> {
-    return [...this.record(sessionId).preferences];
+  async storeArcEntry(sessionId: string, entry: ArcEntry): Promise<void> {
+    this.record(sessionId).arc.push(entry);
   }
 
-  async savePreferences(
+  async getArcEntries(sessionId: string): Promise<ArcEntry[]> {
+    return [...this.record(sessionId).arc];
+  }
+
+  async storePreference(
     sessionId: string,
-    preferences: PreferenceMemory[],
+    pref: PreferenceMemory,
   ): Promise<void> {
-    this.record(sessionId).preferences = [...preferences];
+    const record = this.record(sessionId);
+    const seen = new Set(record.preferences.map((p) => p.label.toLowerCase()));
+    if (!seen.has(pref.label.toLowerCase())) {
+      record.preferences.push(pref);
+    }
+  }
+
+  async getPreferences(sessionId: string): Promise<PreferenceMemory[]> {
+    return [...this.record(sessionId).preferences];
   }
 
   async appendFeedback(
@@ -71,4 +89,42 @@ export class InMemoryProvider implements MemoryProvider {
   async clear(sessionId: string): Promise<void> {
     this.store.delete(sessionId);
   }
+}
+
+let sessionSingleton: InMemoryProvider | undefined;
+
+export function getSessionProvider(): InMemoryProvider {
+  if (!sessionSingleton) {
+    sessionSingleton = new InMemoryProvider();
+  }
+  return sessionSingleton;
+}
+
+export async function storeArcEntry(
+  sessionId: string,
+  entry: ArcEntry,
+): Promise<void> {
+  return getSessionProvider().storeArcEntry(sessionId, entry);
+}
+
+export async function getArcEntries(sessionId: string): Promise<ArcEntry[]> {
+  return getSessionProvider().getArcEntries(sessionId);
+}
+
+export async function storePreference(
+  sessionId: string,
+  pref: PreferenceMemory,
+): Promise<void> {
+  return getSessionProvider().storePreference(sessionId, pref);
+}
+
+export async function getPreferences(
+  sessionId: string,
+): Promise<PreferenceMemory[]> {
+  return getSessionProvider().getPreferences(sessionId);
+}
+
+/** Test-only: forget the in-memory session singleton. */
+export function _resetInMemoryStore(): void {
+  sessionSingleton = undefined;
 }

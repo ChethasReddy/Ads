@@ -1,5 +1,6 @@
 export * from "./schemas";
 export * from "./fixtures";
+export type { ArcEntry, AdFixture } from "./fixtures/knicksGame";
 export { classifyFeedback, SAFE_SCRIPTS } from "./classifier/classifyFeedback";
 export {
   planSafeResponse,

@@ -1,6 +1,8 @@
 import type { AdCandidate, VideoContext } from "../schemas/context";
 import type { ViewerFeedback } from "../schemas/feedback";
 
+export * from "./knicksGame";
+
 export const demoVideoContext: VideoContext = {
   id: "startup-demo-24h",
   title: "How to build a startup demo in 24 hours",

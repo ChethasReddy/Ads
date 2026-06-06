@@ -11,9 +11,12 @@ import {
   type AgentResponse,
   type FrictionAnalysis,
   type MemoryUpdate,
-  type PreferenceMemory,
 } from "@ads/core";
-import { getMemoryProvider } from "@ads/integrations";
+import {
+  getAgentMemoryProvider,
+  storeArcEntry,
+  storePreference,
+} from "@ads/integrations";
 import { apiError, parseJson } from "../_lib/http";
 
 const FeedbackRequestSchema = z.object({
@@ -21,6 +24,7 @@ const FeedbackRequestSchema = z.object({
   feedback: ViewerFeedbackSchema,
   videoContext: VideoContextSchema,
   adCandidate: AdCandidateSchema,
+  adCategory: z.string().optional(),
 });
 
 interface FeedbackResponse {
@@ -29,26 +33,13 @@ interface FeedbackResponse {
   memoryUpdate: MemoryUpdate;
 }
 
-function mergePreferences(
-  existing: PreferenceMemory[],
-  incoming: PreferenceMemory[],
-): PreferenceMemory[] {
-  const seen = new Set(existing.map((p) => p.label.toLowerCase()));
-  const merged = [...existing];
-  for (const pref of incoming) {
-    if (!seen.has(pref.label.toLowerCase())) {
-      seen.add(pref.label.toLowerCase());
-      merged.push(pref);
-    }
-  }
-  return merged;
-}
 
 export async function POST(request: Request): Promise<NextResponse> {
   const parsed = await parseJson(request, FeedbackRequestSchema);
   if (!parsed.ok) return parsed.response;
 
-  const { sessionId, feedback, videoContext, adCandidate } = parsed.data;
+  const { sessionId, feedback, videoContext, adCandidate, adCategory } =
+    parsed.data;
 
   const analysis = classifyFeedback(feedback);
   const candidateResponse = planSafeResponse({
@@ -79,17 +70,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     ],
   };
 
-  const provider = getMemoryProvider();
+  const provider = getAgentMemoryProvider();
   const fallbacksEnabled =
     process.env.ENABLE_PROVIDER_FALLBACKS !== "false";
   let providerFailed = false;
 
   try {
     await provider.appendFeedback(sessionId, feedback);
-    const existing = await provider.getPreferences(sessionId);
-    const merged = mergePreferences(existing, memoryUpdate.allowedPreferences);
-    await provider.savePreferences(sessionId, merged);
     await provider.setSessionMode(sessionId, memoryUpdate.currentMode);
+
+    await storeArcEntry(sessionId, {
+      adIndex: 0,
+      emotionSignal: analysis.emotionSignal,
+      adCategory: adCategory ?? "unknown",
+      timestamp: new Date().toISOString(),
+    });
+
+    for (const pref of memoryUpdate.allowedPreferences) {
+      await storePreference(sessionId, pref);
+    }
   } catch (err) {
     providerFailed = true;
     console.warn("[/api/feedback] provider write failed", {

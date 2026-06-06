@@ -16,6 +16,8 @@
  *   - Raven-1 mark_high_friction (delivered browser-side via Daily.js, then
  *     POSTed to /api/feedback) produces the annoyed outcome in memory.
  *   - Raven-1 mark_engaged via /api/feedback does not block on safety.
+ *   - Arc-aware AD_SLOT_2: a 'frustrated' feedback then POST /api/tavus/session
+ *     adIndex 1 returns a fallbackAgentScript containing "Quick one".
  *
  * Raven-1 perception tool calls reach the browser over Daily.js, not a backend
  * webhook. The frontend maps tool_name -> buttonSignal and calls /api/feedback
@@ -275,6 +277,42 @@ assert(
   engaged.json.agentResponse.safetyStatus !== "blocked",
   "mark_engaged response not safety-blocked",
   engaged.json.agentResponse,
+);
+
+// 10. Arc-aware AD_SLOT_2: frustrated feedback during Ad 1 makes the Ad 2
+//     context builder run. A POST /api/feedback (emotionSignal 'frustrated',
+//     via the annoyed button) followed by POST /api/tavus/session adIndex 1
+//     must return a fallbackAgentScript containing "Quick one".
+const arcSessionId = `smoke-arc-${Date.now()}`;
+console.log("POST /api/feedback (annoyed -> emotionSignal 'frustrated')");
+const arcFeedback = await post("/api/feedback", {
+  sessionId: arcSessionId,
+  feedback: feedbackFor(arcSessionId, "annoyed", "arc-1"),
+  videoContext,
+  adCandidate,
+  adCategory: "Sports & live stats app",
+});
+assert(arcFeedback.status === 200, "status 200", arcFeedback);
+assert(
+  arcFeedback.json.analysis.emotionSignal === "frustrated",
+  "feedback analysis emotionSignal === 'frustrated'",
+  arcFeedback.json.analysis,
+);
+
+console.log("POST /api/tavus/session (adIndex 1 -> arc-aware Ad 2 context)");
+const ad2Session = await post("/api/tavus/session", {
+  sessionId: arcSessionId,
+  videoContext,
+  adCandidate,
+  openingScript: "ignored opening script for ad 2",
+  adIndex: 1,
+});
+assert(ad2Session.status === 200, "status 200", ad2Session);
+assert(
+  typeof ad2Session.json.fallbackAgentScript === "string" &&
+    ad2Session.json.fallbackAgentScript.includes("Quick one"),
+  'adIndex 1 fallbackAgentScript contains "Quick one" (arc-aware context ran)',
+  ad2Session.json,
 );
 
 console.log("smoke: all assertions passed");
