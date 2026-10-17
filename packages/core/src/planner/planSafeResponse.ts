@@ -14,7 +14,8 @@ export interface PlanSafeResponseInput {
  * de_escalate, skip/not_relevant map to stop.
  */
 export function planSafeResponse(input: PlanSafeResponseInput): AgentResponse {
-  const { analysis } = input;
+  const { analysis, adCandidate } = input;
+  const product = `${adCandidate.productName}: ${adCandidate.pitchAngle}`;
 
   if (analysis.intent === "skip") {
     return {
@@ -39,7 +40,7 @@ export function planSafeResponse(input: PlanSafeResponseInput): AgentResponse {
   if (analysis.intent === "continue") {
     return {
       strategy: "continue",
-      script: SAFE_SCRIPTS.interested,
+      script: `${product} What would you like to know?`,
       shouldContinue: true,
       shouldStop: false,
       safetyStatus: "allowed",
@@ -59,7 +60,7 @@ export function planSafeResponse(input: PlanSafeResponseInput): AgentResponse {
     if (analysis.frictionLevel === "medium") {
       return {
         strategy: "shorten",
-        script: SAFE_SCRIPTS.too_long,
+      script: `One line: ${product}`,
         shouldContinue: true,
         shouldStop: false,
         safetyStatus: "allowed",
@@ -67,7 +68,7 @@ export function planSafeResponse(input: PlanSafeResponseInput): AgentResponse {
     }
     return {
       strategy: "shorten",
-      script: SAFE_SCRIPTS.tell_me_quickly,
+      script: `Useful part only: ${product}`,
       shouldContinue: true,
       shouldStop: false,
       safetyStatus: "allowed",
@@ -77,8 +78,7 @@ export function planSafeResponse(input: PlanSafeResponseInput): AgentResponse {
   if (analysis.intent === "clarify") {
     return {
       strategy: "clarify",
-      script:
-        "Quick clarification: this is a tool for turning a rough idea into demo screens.",
+      script: `Quick clarification: ${product}`,
       shouldContinue: true,
       shouldStop: false,
       safetyStatus: "allowed",

@@ -1,194 +1,104 @@
-import type { AdCandidate } from "../schemas/context";
+import type { AdCandidate, VideoContext } from "../schemas/context";
 
-/**
- * Live NBA Finals broadcast ad system. The broadcast has exactly two hardcoded
- * ad slots. AD_SLOT_1 fires at the first natural break; AD_SLOT_2 fires at
- * halftime and adapts to how the viewer reacted during AD_SLOT_1.
- *
- * No LLM is involved. Slot content and Ad-2 adaptation are deterministic so the
- * broadcast demo is stable for judges.
- */
-
-/**
- * A single hardcoded broadcast ad slot.
- *
- * - `adIndex`              0 for the first slot, 1 for the second.
- * - `triggerTimeSeconds`   point in the video (seconds) at which the frontend fires the ad.
- * - `triggerMoment`        the in-game broadcast beat that cues the slot.
- * - `tavusContext`         the conversational_context handed to the Tavus agent.
- * - `adCandidate`          the product pitched in this slot.
- */
 export type AdFixture = {
   adIndex: number;
   triggerTimeSeconds: number;
   triggerMoment: string;
   tavusContext: string;
+  openingScript: string;
   adCandidate: AdCandidate;
 };
 
-/**
- * One recorded interaction from a prior ad slot, used to make AD_SLOT_2
- * arc-aware. `emotionSignal` mirrors FrictionAnalysis.emotionSignal (kept as a
- * string so the arc store stays decoupled from the friction schema).
- * `timestamp` is an ISO string captured when the feedback was classified.
- */
 export type ArcEntry = {
   adIndex: number;
   emotionSignal: string;
   adCategory: string;
   timestamp: string;
 };
-
-/** How AD_SLOT_2 adapts based on AD_SLOT_1 arc entries. */
 export type Ad2ArcTier = "frustrated" | "engaged" | "default";
 
-/** Classified emotion signals stored by /api/feedback (FrictionAnalysis.emotionSignal). */
-const FRUSTRATED_SIGNALS = new Set(["frustrated", "annoyed", "disinterested"]);
-const RUSHED_SIGNALS = new Set(["rushed"]);
-const ENGAGED_SIGNALS = new Set(["engaged", "interested", "curious"]);
+export const knicksVideoContext: VideoContext = {
+  id: "knicks-finals-game2",
+  title: "Knicks basketball — recorded demo clip",
+  topic: "Basketball broadcast demo",
+  tags: ["nba", "knicks", "basketball", "demo"],
+  transcriptSnippet: "A recorded basketball clip with two illustrative ad breaks.",
+  viewerMode: "focused",
+  interruptionRisk: "high",
+  recommendedAdStyle: "short_utility",
+};
 
-const AD2_STOP_RULES =
-  'STOP RULES (critical — follow exactly): ' +
-  'If the viewer says stop, skip, enough, quit, or wants to watch the game: ' +
-  'say ONLY: "Fair — Finals jersey at knicksjersey.com. Enjoy the celebration." ' +
-  'Then stop talking immediately. The ad will end on its own. ' +
-  'Never pressure. Never guilt. Never keep pitching after stop.';
+/** Shared grounding policy for every broadcast slot, including follow-up turns. */
+export const PRODUCT_ANSWER_RULES = [
+  "This is an illustrative demo, not a real store or a live broadcast. Product names are demo labels, not verified retail listings or endorsements.",
+  "Answer the viewer's current question directly in one or two short sentences. Use prior turns to resolve follow-up questions; do not restart the opening pitch.",
+  "Only use the supplied product facts. Price, sizes, stock, shipping, discounts, purchase links and exact technical specifications are unknown unless explicitly provided. Say you do not know missing facts; never invent an offer or a checkout link.",
+  "If the viewer asks about another product or corrects you, acknowledge and clarify briefly. Do not claim to see their screen or know anything beyond the supplied recorded demo context.",
+  "If the viewer explicitly says stop, skip, no thanks, enough, or wants to watch the game, stop immediately with no closing sales pitch. Do not add a product name, link or offer. If annoyed, acknowledge once and reduce pressure. Inferred engagement is not permission for a longer pitch.",
+].join("\n");
+
+const shoe: AdCandidate = {
+  id: "nike-air-zoom-anunoby",
+  productName: "Nike Air Zoom Flight",
+  category: "basketball_shoe",
+  pitchAngle: "An illustrative neon-green basketball shoe concept tied to the on-screen play.",
+  defaultLengthSeconds: 30,
+  relevanceReason: "A basketball shoe concept during a recorded basketball clip; exact player equipment is not verified.",
+};
+const jersey: AdCandidate = {
+  id: "knicks-finals-jersey",
+  productName: "Official Knicks Finals Jersey",
+  category: "team_jersey",
+  pitchAngle: "An illustrative Knicks team jersey concept for basketball fans.",
+  defaultLengthSeconds: 15,
+  relevanceReason: "A Knicks jersey concept during the closing moment of the recorded demo clip.",
+};
 
 export const AD_SLOT_1: AdFixture = {
   adIndex: 0,
   triggerTimeSeconds: 19,
-  triggerMoment:
-    'OG Anunoby battles Luke Kornet for the ball. Anunoby is visibly wearing ' +
-    'neon green Nike basketball shoes.',
-  tavusContext:
-    'You are presenting a Nike basketball shoe ad inside a live NBA Finals broadcast. ' +
-    'The viewer just watched OG Anunoby fight for the ball against Luke Kornet at ' +
-    'the 19-second mark. Anunoby was wearing neon green Nike shoes during that play. ' +
-    'Wait for the viewer to say hi or speak first, then deliver a ~30 second pitch. ' +
-    'STRUCTURE (about 30 seconds total): ' +
-    '(1) Hook — tie to what they just saw: "Those neon green Nikes on Anunoby? Same shoe." ' +
-    '(2) Product — Nike Air Zoom Flight, neon green Anunoby colorway. Full-length Zoom Air ' +
-    'unit for responsive court feel, lightweight upper built for guards and forwards who ' +
-    'cut hard and play above the rim. Same line Anunoby wore tonight. ' +
-    '(3) Offer — 4th of July sale: 15% off at nike.com. Free shipping over $50. ' +
-    'Sale runs through July 4th only. ' +
-    '(4) Close — "Link in the overlay if you want the pair." ' +
-    'STOP RULES (critical — follow exactly): ' +
-    'If the viewer says stop, skip, enough, quit, or wants to watch the game: ' +
-    'say ONLY this closing line: "Fair — Nike Air Zoom Flight, 15% off at nike.com. Enjoy the game." ' +
-    'Then stop talking immediately. Do not add anything else. The ad will end on its own. ' +
-    'If they sound annoyed or rushed (not a full stop): ' +
-    'say ONLY: "Fair — Nike Air Zoom, 15% off this week." then stop. ' +
-    'Never pressure. Never guilt. Never keep pitching after stop or annoyance.',
-  adCandidate: {
-    id: "nike-air-zoom-anunoby",
-    productName: "Nike Air Zoom Flight",
-    category: "basketball_shoe",
-    pitchAngle:
-      "The same neon green Nike Air Zoom Flight Anunoby just wore — full-length Zoom Air, " +
-      "lightweight build for cuts and elevation. 4th of July sale: 15% off at nike.com through July 4.",
-    defaultLengthSeconds: 30,
-    relevanceReason:
-      "Anunoby visibly wearing neon green Nike Air Zoom Flight shoes during the 19-second play.",
-  },
+  triggerMoment: "A basketball play at the 19-second mark of the recorded clip.",
+  openingScript: "This demo pairs the basketball play with Nike Air Zoom Flight, an illustrative neon-green shoe concept. I can answer a quick question, or you can skip.",
+  tavusContext: [
+    PRODUCT_ANSWER_RULES,
+    "Demo product: Nike Air Zoom Flight. Category: basketball shoe. Demo color: neon green. Exact player, shoe identification and performance specifications are not verified.",
+    "The recorded clip has reached a basketball play at 19 seconds. Wait for the viewer to speak, then introduce the demo concept briefly. If they start with a question, answer it instead of pitching.",
+  ].join("\n\n"),
+  adCandidate: shoe,
 };
 
 export const AD_SLOT_2: AdFixture = {
   adIndex: 1,
   triggerTimeSeconds: 39,
-  triggerMoment: "Final buzzer. Knicks win 105-104. 2-0 series lead.",
-  tavusContext: "", // populated at runtime by buildAd2Context()
-  adCandidate: {
-    id: "knicks-finals-jersey",
-    productName: "Official Knicks Finals Jersey",
-    category: "team_jersey",
-    pitchAngle:
-      "Celebrate the win with your team. Official Knicks jerseys at knicksjersey.com.",
-    defaultLengthSeconds: 15,
-    relevanceReason: "Knicks win Game 2, 2-0 series lead, peak celebration moment.",
-  },
+  triggerMoment: "The closing basketball moment at the 39-second mark of the recorded clip.",
+  openingScript: "This demo's second concept is the Official Knicks Finals Jersey. It's an illustrative team jersey, with no verified retail offer.",
+  tavusContext: "", // built from earlier feedback by buildAd2Context
+  adCandidate: jersey,
 };
 
-/**
- * Classifies AD_SLOT_1 arc entries into the tier that drives AD_SLOT_2 script and
- * duration. Frustrated/rushed viewers get the shortest apology ad; engaged
- * viewers get a warmer pitch with purchase-intent handling.
- */
 export function classifyAd2Arc(arc: ArcEntry[]): Ad2ArcTier {
   const signals = arc.map((entry) => entry.emotionSignal);
-
-  if (signals.some((signal) => FRUSTRATED_SIGNALS.has(signal))) {
-    return "frustrated";
-  }
-
-  if (signals.some((signal) => RUSHED_SIGNALS.has(signal))) {
-    return "frustrated";
-  }
-
-  if (signals.some((signal) => ENGAGED_SIGNALS.has(signal))) {
-    return "engaged";
-  }
-
+  if (signals.some((signal) => ["frustrated", "annoyed", "disinterested", "rushed"].includes(signal))) return "frustrated";
+  if (signals.some((signal) => ["engaged", "interested", "curious"].includes(signal))) return "engaged";
   return "default";
 }
 
-/** Auto-close fallback duration (seconds) for AD_SLOT_2 per arc tier. */
 export function getAd2DurationSeconds(arc: ArcEntry[]): number {
   switch (classifyAd2Arc(arc)) {
-    case "frustrated":
-      return 10;
-    case "engaged":
-      return 22;
-    default:
-      return 18;
+    case "frustrated": return 10;
+    case "engaged": return 22;
+    default: return 18;
   }
 }
 
 export function buildAd2Context(arc: ArcEntry[]): string {
-  const base =
-    "You are presenting a Knicks Finals Jersey ad inside a live NBA Finals broadcast. " +
-    "The Knicks just won 105-104. Jalen Brunson hit the go-ahead free throw. " +
-    "Wembanyama missed the buzzer-beater. Knicks lead the series 2-0. " +
-    "Official Finals jerseys are at knicksjersey.com. ";
-
   const tier = classifyAd2Arc(arc);
-
-  if (tier === "frustrated") {
-    return (
-      base +
-      "CRITICAL CONTEXT: This viewer was frustrated, skipped, or impatient during the last ad. " +
-      "Wait for them to speak first if they want to. " +
-      'Open with exactly this (~8 seconds): "Last one, I promise — Knicks Finals jersey at knicksjersey.com. ' +
-      'Celebrate the 2-0 lead. Done." ' +
-      "Then stop. No story. No extra lines. Offer first, done. " +
-      'If they push back at all, say ONLY: "Enjoy the celebration." and stop. ' +
-      AD2_STOP_RULES
-    );
-  }
-
-  if (tier === "engaged") {
-    return (
-      base +
-      "CRITICAL CONTEXT: This viewer engaged positively with the last ad. " +
-      "Wait for them to speak first when possible, then deliver a ~15 second celebratory pitch: " +
-      '"Knicks are up 2-0 — grab the official Finals jersey at knicksjersey.com before they sell out. They ship fast." ' +
-      "PURCHASE INTENT (critical): If they express wanting the jersey — e.g. " +
-      '"damn I want the jersey", "I need that jersey", "where do I get one", "I want one" — ' +
-      "match their energy in one or two sentences. Example: " +
-      '"Yeah — official Finals jersey at knicksjersey.com. Grab yours and celebrate the 2-0 lead." ' +
-      "Do NOT launch into a long pitch if they already showed intent. " +
-      "Warm, celebratory tone. " +
-      AD2_STOP_RULES
-    );
-  }
-
-  return (
-    base +
-    'Wait for the viewer to speak first if they want to. ' +
-    'Opening (~12 seconds): "Knicks win! Official Finals jersey at knicksjersey.com — ' +
-    'celebrate the series lead with your team." ' +
-    "Direct and celebratory. " +
-    "If they say they want the jersey, confirm knicksjersey.com in one short line. " +
-    AD2_STOP_RULES
-  );
+  return [
+    PRODUCT_ANSWER_RULES,
+    "Demo product: Official Knicks Finals Jersey. Category: team jersey. Team: New York Knicks. The word Official is part of the illustrative product label, not verified licensing. This is the second ad in the recorded basketball clip.",
+    tier === "frustrated"
+      ? "The earlier feedback requested less interruption. Keep any introduction to one short sentence. If the viewer pushes back, stop immediately."
+      : "Keep the introduction short. Prior positive signals do not authorize a longer pitch; wait for an explicit question or request for more detail.",
+    "Answer follow-up questions about this jersey using only the demo facts. If asked about the earlier shoe concept, distinguish the two products and admit unknown details.",
+  ].join("\n\n");
 }

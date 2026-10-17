@@ -7,6 +7,8 @@ export {
   buildAd2Context,
   classifyAd2Arc,
   getAd2DurationSeconds,
+  knicksVideoContext,
+  PRODUCT_ANSWER_RULES,
 } from "./fixtures/knicksGame";
 export { classifyFeedback, SAFE_SCRIPTS } from "./classifier/classifyFeedback";
 export {
