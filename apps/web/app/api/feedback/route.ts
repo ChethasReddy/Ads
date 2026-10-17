@@ -95,8 +95,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       getArcEntries(sessionId),
       new Promise<never>((_, reject) => { readTimer = setTimeout(() => reject(new Error("History confirmation timed out")), 2000); }),
     ]).finally(() => clearTimeout(readTimer));
-    if (!visibleHistory.some(entry => entry.timestamp === arcEntry.timestamp &&
-      entry.emotionSignal === arcEntry.emotionSignal && entry.adCategory === arcEntry.adCategory)) {
+    // Iris assigns its own createdAt during store; local memory preserves ours.
+    const writeStartedAt = Date.parse(arcEntry.timestamp);
+    const confirmedAt = Date.now();
+    if (!visibleHistory.some(entry => Date.parse(entry.timestamp) >= writeStartedAt &&
+      Date.parse(entry.timestamp) <= confirmedAt && entry.emotionSignal === arcEntry.emotionSignal &&
+      entry.adCategory === arcEntry.adCategory && entry.adIndex === arcEntry.adIndex)) {
       providerFailed = true;
     }
 

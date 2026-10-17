@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AD_SLOT_1, knicksVideoContext } from "@ads/core";
 const memory = vi.hoisted(() => ({
   appendFeedback: vi.fn(), setSessionMode: vi.fn(), storeArcEntry: vi.fn(), getArcEntries: vi.fn(), storePreference: vi.fn(),
@@ -17,7 +17,26 @@ beforeEach(() => {
   vi.stubEnv("ENABLE_PROVIDER_FALLBACKS", "true");
   memory.getArcEntries.mockImplementation(async () => [memory.storeArcEntry.mock.calls.at(-1)?.[1]]);
 });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); });
 describe("feedback persistence confirmation", () => {
+  it("accepts the fresh timestamp assigned by the remote history adapter", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-17T12:00:00Z"));
+    memory.getArcEntries.mockImplementation(async () => {
+      vi.setSystemTime(new Date("2026-10-17T12:00:00.005Z"));
+      return [{ ...memory.storeArcEntry.mock.calls.at(-1)![1], timestamp: new Date().toISOString() }];
+    });
+    const response = await POST(request());
+    expect(response.headers.get("x-fallback-used")).toBeNull();
+  });
+
+  it("rejects an older matching signal instead of confirming a lost new write", async () => {
+    memory.getArcEntries.mockImplementation(async () => [{
+      ...memory.storeArcEntry.mock.calls.at(-1)![1], timestamp: "2020-01-01T00:00:00Z",
+    }]);
+    expect((await POST(request())).headers.get("x-fallback-used")).toBe("true");
+  });
+
   it("confirms history through the same reader used by the next ad", async () => {
     const response = await POST(request());
     expect(response.status).toBe(200);
