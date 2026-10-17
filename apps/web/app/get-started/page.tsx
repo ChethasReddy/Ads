@@ -1,281 +1,123 @@
 "use client";
 
-import { AD_SLOT_1, AD_SLOT_2, type AdFixture } from "@ads/core";
+import { AD_SLOT_1, AD_SLOT_2, AgentResponseSchema, classifyFeedback, planSafeResponse, knicksVideoContext, type AdFixture, type ButtonSignal } from "@ads/core";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { TavusAgentPanel } from "../../components/tavus/TavusAgentPanel";
-import { destroyDailyCall } from "../../lib/dailyCallSingleton";
-import { tavusLog } from "../../lib/tavusDebug";
-import type { TavusSessionResponse } from "../../lib/tavus";
+import { TavusAgentPanel, type TavusAgentHandle } from "../../components/tavus/TavusAgentPanel";
+import { postJson, TavusSessionSchema, type TavusSessionResponse, type FeedbackSource } from "../../lib/tavus";
+import { TavusConversation } from "../../lib/state/tavusConversation";
 
-const AD_SLOTS: AdFixture[] = [AD_SLOT_1, AD_SLOT_2];
-
-/** Safety net if Tavus never emits replica-stopped after a stop request. */
-const AD_STOP_BACKUP_CLOSE_SECONDS = 15;
-
-const QUICK_CLOSE_SIGNALS = new Set([
-  "skip",
-  "annoyed",
-  "tell_me_quickly",
-  "not_relevant",
-  "too_long",
-]);
-
-const knicksVideoContext = {
-  id: "knicks-finals-game2",
-  title: "Knicks vs Spurs — NBA Finals Game 2",
-  topic: "NBA Finals live broadcast",
-  tags: ["nba", "knicks", "finals", "basketball"],
-  transcriptSnippet:
-    "Live coverage of Knicks Finals Game 2 at Madison Square Garden.",
-  viewerMode: "focused" as const,
-  interruptionRisk: "high" as const,
-  recommendedAdStyle: "short_utility" as const,
-};
-
+const AD_SLOTS = [AD_SLOT_1, AD_SLOT_2];
 const FEEDBACK_BUTTONS = [
-  { signal: "too_long", label: "Too long" },
-  { signal: "not_relevant", label: "Not relevant" },
-  { signal: "annoyed", label: "I'm annoyed" },
-  { signal: "tell_me_quickly", label: "Tell me quickly" },
-  { signal: "interested", label: "I'm interested" },
-  { signal: "skip", label: "Skip this" },
+  { signal: "too_long", label: "Too long" }, { signal: "not_relevant", label: "Not relevant" },
+  { signal: "annoyed", label: "I'm annoyed" }, { signal: "tell_me_quickly", label: "Tell me quickly" },
+  { signal: "interested", label: "I'm interested" }, { signal: "skip", label: "Skip this" },
 ] as const;
-
-type ActiveAd = {
-  slot: AdFixture;
-  session: TavusSessionResponse;
-};
-
-function formatTime(timeInSeconds: number) {
-  const safeTime = Number.isFinite(timeInSeconds)
-    ? Math.max(0, timeInSeconds)
-    : 0;
-  const minutes = Math.floor(safeTime / 60);
-  const seconds = Math.floor(safeTime % 60);
-
-  return `${minutes.toString().padStart(2, "0")}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
-}
-
-function adDurationSeconds(activeAd: ActiveAd): number {
-  return (
-    activeAd.session.adDurationSeconds ??
-    activeAd.slot.adCandidate.defaultLengthSeconds
-  );
+type ActiveAd = { id: number; slot: AdFixture; session: TavusSessionResponse; lifecycle: TavusConversation };
+type AdRun = { id: number; slot: AdFixture; abort: AbortController; lifecycle: TavusConversation };
+function formatTime(value: number) {
+  const time = Number.isFinite(value) ? Math.max(0, value) : 0;
+  return `${Math.floor(time / 60).toString().padStart(2, "0")}:${Math.floor(time % 60).toString().padStart(2, "0")}`;
 }
 
 export default function GetStartedPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const firedRef = useRef<Set<number>>(new Set());
-  const adCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const adStopRequestedRef = useRef(false);
-  const [sessionId, setSessionId] = useState(() => `demo-${Date.now()}`);
-
+  const panelRef = useRef<TavusAgentHandle>(null);
+  const firedRef = useRef(new Set<number>());
+  const currentRun = useRef<AdRun | null>(null);
+  const generation = useRef(0);
+  const pendingNegativeWrites = useRef(0);
+  const memoryUncertain = useRef(false);
+  const writeQueue = useRef<Promise<void>>(Promise.resolve());
+  const sessionRef = useRef("");
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(180);
   const [activeAd, setActiveAd] = useState<ActiveAd | null>(null);
   const [adLoading, setAdLoading] = useState(false);
-  const [stopPending, setStopPending] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<string | null>(null);
+  const markers = useMemo(() => AD_SLOTS.map(slot => ({ label: `Ad ${slot.adIndex + 1}`, time: slot.triggerTimeSeconds,
+    triggerMoment: slot.triggerMoment, left: `${slot.triggerTimeSeconds / duration * 100}%` })), [duration]);
 
-  const markers = useMemo(
-    () =>
-      AD_SLOTS.map((slot) => ({
-        label: `Ad ${slot.adIndex + 1}`,
-        time: slot.triggerTimeSeconds,
-        triggerMoment: slot.triggerMoment,
-      })).map((marker) => ({
-        ...marker,
-        left: `${(marker.time / duration) * 100}%`,
-      })),
-    [duration],
-  );
+  const dismissAd = useCallback(() => currentRun.current?.lifecycle.stop(), []);
 
-  const dismissAd = useCallback(() => {
-    tavusLog("dismissAd — closing overlay and resuming video");
-    if (adCloseTimerRef.current) {
-      clearTimeout(adCloseTimerRef.current);
-      adCloseTimerRef.current = null;
+  const sendFeedback = useCallback((signal: ButtonSignal, source: FeedbackSource = "button") => {
+    const run = currentRun.current;
+    if (!run || run.lifecycle.ended) return;
+    const requestId = run.lifecycle.request();
+    const sessionId = sessionRef.current;
+    const negative = signal !== "interested";
+    if (negative) pendingNegativeWrites.current++;
+    const feedback = { id: crypto.randomUUID(), sessionId, buttonSignal: signal, timestamp: new Date().toISOString() };
+    if (signal === "skip" || signal === "not_relevant") run.lifecycle.stop();
+    else {
+      if (signal === "interested") run.lifecycle.engage(source);
+      else panelRef.current?.interrupt();
+      setFeedbackStatus("Applying feedback…");
     }
-
-    adStopRequestedRef.current = false;
-    setStopPending(false);
-    void destroyDailyCall();
-    setActiveAd(null);
-    setFeedbackStatus(null);
-    void videoRef.current?.play();
+    // Preserve persistence order without ever waiting to stop local media.
+    writeQueue.current = writeQueue.current.catch(() => {}).then(async () => {
+      let response;
+      let stored = true;
+      try {
+        const data = await postJson("/api/feedback", { sessionId, feedback, videoContext: knicksVideoContext,
+          adCandidate: run.slot.adCandidate, adCategory: run.slot.adCandidate.category });
+        response = AgentResponseSchema.parse((data as { agentResponse?: unknown }).agentResponse);
+      } catch {
+        stored = false;
+        response = planSafeResponse({ analysis: classifyFeedback(feedback), videoContext: knicksVideoContext, adCandidate: run.slot.adCandidate });
+      } finally {
+        if (negative && sessionRef.current === sessionId) pendingNegativeWrites.current--;
+      }
+      if (!stored && negative && sessionRef.current === sessionId) memoryUncertain.current = true;
+      if (currentRun.current !== run || !run.lifecycle.accept(requestId)) return;
+      setFeedbackStatus(`${response.script}${stored ? "" : " Demo response active; memory was not confirmed."}`);
+      if (response.shouldStop) { run.lifecycle.stop(); return; }
+      panelRef.current?.respond({ id: requestId, script: response.script, signal, source });
+      if (negative) run.lifecycle.shorten();
+    });
   }, []);
 
-  const scheduleAdClose = useCallback(
-    (seconds: number, reason: string) => {
-      if (adCloseTimerRef.current) {
-        clearTimeout(adCloseTimerRef.current);
-      }
-
-      tavusLog(`scheduling ad close in ${seconds}s`, { reason });
-      adCloseTimerRef.current = setTimeout(() => {
-        dismissAd();
-      }, seconds * 1000);
-    },
-    [dismissAd],
-  );
-
-  const sendFeedback = useCallback(
-    async (buttonSignal: string, options?: { scheduleClose?: boolean }) => {
-      const scheduleClose = options?.scheduleClose ?? true;
-
-      if (!activeAd) {
-        return;
-      }
-
-      setFeedbackStatus("Sending feedback…");
-
-      try {
-        const res = await fetch("/api/feedback", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            feedback: {
-              id: `feedback-${Date.now()}`,
-              sessionId,
-              buttonSignal,
-              timestamp: new Date().toISOString(),
-            },
-            videoContext: knicksVideoContext,
-            adCandidate: activeAd.slot.adCandidate,
-            adCategory: activeAd.slot.adCandidate.category,
-          }),
-        });
-
-        const data = (await res.json()) as {
-          agentResponse?: { script?: string; shouldStop?: boolean };
-          analysis?: { emotionSignal?: string };
-        };
-
-        if (res.ok) {
-          const closing =
-            data.agentResponse?.shouldStop ||
-            QUICK_CLOSE_SIGNALS.has(buttonSignal);
-
-          setFeedbackStatus(
-            closing
-              ? `${data.agentResponse?.script ?? "Got it."} Closing ad…`
-              : (data.agentResponse?.script ??
-                `Signal recorded (${data.analysis?.emotionSignal ?? buttonSignal}).`),
-          );
-
-          if (closing && scheduleClose && !adStopRequestedRef.current) {
-            scheduleAdClose(
-              AD_STOP_BACKUP_CLOSE_SECONDS,
-              `feedback:${buttonSignal}`,
-            );
-          }
-        } else {
-          setFeedbackStatus("Feedback failed — try again.");
-        }
-      } catch {
-        setFeedbackStatus("Feedback failed — try again.");
-      }
-    },
-    [activeAd, scheduleAdClose, sessionId],
-  );
-
-  const handleStopRequested = useCallback(() => {
-    if (adStopRequestedRef.current) {
-      return;
+  const triggerAd = useCallback(async (slot: AdFixture) => {
+    if (currentRun.current || pendingNegativeWrites.current > 0 || memoryUncertain.current) return;
+    sessionRef.current ||= `demo-${crypto.randomUUID()}`;
+    videoRef.current?.pause();
+    setAdLoading(true);
+    setFeedbackStatus(null);
+    const run: AdRun = {
+      id: ++generation.current, slot, abort: new AbortController(),
+      lifecycle: new TavusConversation(() => {
+        if (currentRun.current !== run) return;
+        currentRun.current = null;
+        setActiveAd(null); setAdLoading(false); setFeedbackStatus(null);
+        void videoRef.current?.play().catch(() => {});
+      }, () => {
+        run.abort.abort();
+        if (currentRun.current === run) panelRef.current?.stop();
+      }),
+    };
+    currentRun.current = run;
+    run.lifecycle.start(slot.adCandidate.defaultLengthSeconds);
+    let session: TavusSessionResponse;
+    try {
+      session = TavusSessionSchema.parse(await postJson("/api/tavus/session", {
+        sessionId: sessionRef.current, videoContext: knicksVideoContext, adCandidate: slot.adCandidate,
+        openingScript: slot.openingScript, adIndex: slot.adIndex,
+      }, run.abort.signal));
+    } catch {
+      session = { provider: "mock", sessionId: sessionRef.current, fallbackAgentScript: slot.openingScript, status: "fallback_ready" };
     }
+    if (currentRun.current !== run || run.lifecycle.ended) return;
+    // Use the arc-aware short budget returned by the server.
+    run.lifecycle.start(session.adDurationSeconds ?? slot.adCandidate.defaultLengthSeconds);
+    setActiveAd({ id: run.id, slot, session, lifecycle: run.lifecycle });
+    setAdLoading(false);
+    if (session.provider === "mock") run.lifecycle.live();
+  }, []);
 
-    adStopRequestedRef.current = true;
-    setStopPending(true);
-    tavusLog(
-      "viewer requested stop — auto-dismiss when agent finishes closing line",
-    );
-    setFeedbackStatus("Got it — closing ad after the agent finishes…");
-    scheduleAdClose(AD_STOP_BACKUP_CLOSE_SECONDS, "voice-stop-backup");
-    void sendFeedback("skip", { scheduleClose: false });
-  }, [sendFeedback, scheduleAdClose]);
-
-  const triggerAd = useCallback(
-    async (slot: AdFixture) => {
-      if (adLoading || activeAd) {
-        return;
-      }
-
-      videoRef.current?.pause();
-      setAdLoading(true);
-      setFeedbackStatus(null);
-
-      try {
-        const res = await fetch("/api/tavus/session", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            videoContext: knicksVideoContext,
-            adCandidate: slot.adCandidate,
-            openingScript: slot.tavusContext || slot.adCandidate.pitchAngle,
-            adIndex: slot.adIndex,
-          }),
-        });
-
-        const data = (await res.json()) as TavusSessionResponse;
-
-        tavusLog("Tavus session created for ad slot", {
-          adIndex: slot.adIndex,
-          provider: data.provider,
-          status: data.status,
-          conversationUrl: data.tavusConversationUrl,
-          hasMeetingToken: Boolean(data.meetingToken),
-        });
-
-        setActiveAd({ slot, session: data });
-      } catch {
-        setActiveAd({
-          slot,
-          session: {
-            provider: "mock",
-            sessionId,
-            fallbackAgentScript:
-              slot.tavusContext || slot.adCandidate.pitchAngle,
-            status: "fallback_ready",
-          },
-        });
-      } finally {
-        setAdLoading(false);
-      }
-    },
-    [activeAd, adLoading, sessionId],
-  );
-
-  const scheduleFullAdClose = useCallback(() => {
-    if (!activeAd) {
-      return;
-    }
-
-    scheduleAdClose(
-      adDurationSeconds(activeAd) + 8,
-      `slot-${activeAd.slot.adIndex}-full-duration`,
-    );
-  }, [activeAd, scheduleAdClose]);
-
-  useEffect(() => {
-    if (!activeAd) {
-      return;
-    }
-
-    const duration = adDurationSeconds(activeAd);
-
-    // Schedule immediately as a fallback if the agent never reports live.
-    scheduleAdClose(
-      duration + 25,
-      `slot-${activeAd.slot.adIndex}-join-fallback`,
-    );
-    // Intentionally no cleanup — React Strict Mode remounts were clearing the
-    // timer before it fired. dismissAd() clears the timer when the ad closes.
-  }, [activeAd?.session.sessionId, activeAd?.slot.adIndex, scheduleAdClose]);
+  useEffect(() => () => {
+    currentRun.current?.lifecycle.dispose();
+    currentRun.current = null;
+  }, []);
 
   function syncTime() {
     if (!videoRef.current) {
@@ -289,11 +131,12 @@ export default function GetStartedPage() {
       if (
         time >= slot.triggerTimeSeconds &&
         !firedRef.current.has(slot.adIndex) &&
-        !activeAd &&
-        !adLoading
+        !currentRun.current &&
+        pendingNegativeWrites.current === 0
       ) {
         firedRef.current.add(slot.adIndex);
-        void triggerAd(slot);
+        if (!memoryUncertain.current) void triggerAd(slot);
+        break;
       }
     }
   }
@@ -327,31 +170,21 @@ export default function GetStartedPage() {
   }
 
   function startSession() {
-    if (adCloseTimerRef.current) {
-      clearTimeout(adCloseTimerRef.current);
-      adCloseTimerRef.current = null;
-    }
-
-    adStopRequestedRef.current = false;
-    setStopPending(false);
-    void destroyDailyCall();
-    setSessionId(`demo-${Date.now()}`);
+    currentRun.current?.lifecycle.dispose();
+    currentRun.current = null;
+    sessionRef.current = `demo-${crypto.randomUUID()}`;
+    pendingNegativeWrites.current = 0;
+    memoryUncertain.current = false;
+    writeQueue.current = Promise.resolve();
     firedRef.current.clear();
-    setActiveAd(null);
-    setAdLoading(false);
-    setFeedbackStatus(null);
+    setActiveAd(null); setAdLoading(false); setFeedbackStatus(null);
     if (videoRef.current) {
       videoRef.current.currentTime = 0;
-      void videoRef.current.play();
+      void videoRef.current.play().catch(() => {});
     }
     setCurrentTime(0);
   }
-
-  const fallbackScript =
-    activeAd?.session.fallbackAgentScript ??
-    activeAd?.slot.tavusContext ??
-    activeAd?.slot.adCandidate.pitchAngle ??
-    "";
+  const fallbackScript = activeAd?.session.fallbackAgentScript ?? activeAd?.slot.openingScript ?? "";
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-[#1b1b1b] px-4 py-6 text-[#fff8d6]">
@@ -392,13 +225,16 @@ export default function GetStartedPage() {
                     <div className="absolute inset-0 flex items-end justify-end bg-black/50 p-3 sm:p-4">
                       <div className="flex max-h-[85%] w-full max-w-md flex-col border-2 border-[#7bdff6] bg-[#1b1b1b] p-3 shadow-[6px_6px_0px_0px_#000] sm:max-w-lg">
                         {adLoading ? (
-                          <p className="text-sm text-[#7bdff6]">
-                            Starting Tavus agent…
-                          </p>
+                          <div><p className="text-sm text-[#7bdff6]">Starting Tavus agent…</p>
+                            <button type="button" onClick={() => sendFeedback("skip")} className="mt-3 border px-3 py-2">Skip this</button>
+                          </div>
                         ) : (
                           activeAd && (
                             <>
                               <TavusAgentPanel
+                                key={activeAd.id}
+                                ref={panelRef}
+                                conversationId={activeAd.session.tavusConversationId}
                                 conversationUrl={
                                   activeAd.session.tavusConversationUrl ?? ""
                                 }
@@ -409,14 +245,13 @@ export default function GetStartedPage() {
                                   activeAd.slot.adCandidate.productName
                                 }
                                 triggerMoment={activeAd.slot.triggerMoment}
-                                onPerceptionSignal={sendFeedback}
+                                onFeedback={sendFeedback}
                                 onConversationEnd={dismissAd}
-                                onStopRequested={handleStopRequested}
-                                onAgentLive={scheduleFullAdClose}
-                                stopPending={stopPending}
-                                minReplicaSpeechSeconds={
-                                  adDurationSeconds(activeAd) <= 12 ? 3 : 5
-                                }
+                                onAgentLive={() => activeAd.lifecycle.live()}
+                                onQuestion={() => {
+                                  activeAd.lifecycle.request();
+                                  activeAd.lifecycle.engage("question");
+                                }}
                               />
 
                               <div className="mt-3 flex flex-wrap gap-1.5 border-t border-[#f3e8a6]/30 pt-3">
@@ -424,11 +259,7 @@ export default function GetStartedPage() {
                                   <button
                                     key={signal}
                                     type="button"
-                                    onClick={() =>
-                                      signal === "skip"
-                                        ? handleStopRequested()
-                                        : void sendFeedback(signal)
-                                    }
+                                    onClick={() => sendFeedback(signal)}
                                     className="border border-[#f3e8a6]/60 px-2 py-1 text-[10px] uppercase tracking-wide transition-colors hover:bg-[#f3e8a6] hover:text-black sm:text-xs"
                                   >
                                     {label}
@@ -444,7 +275,7 @@ export default function GetStartedPage() {
 
                               <button
                                 type="button"
-                                onClick={dismissAd}
+                                onClick={() => sendFeedback("skip")}
                                 className="mt-3 w-full border border-[#f3e8a6] px-2 py-1 text-xs transition-colors hover:bg-[#f3e8a6] hover:text-black"
                               >
                                 Dismiss &amp; resume game

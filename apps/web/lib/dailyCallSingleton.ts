@@ -1,47 +1,42 @@
 import Daily, { type DailyCall, type DailyParticipant } from "@daily-co/daily-js";
-import { tavusError, tavusLog, tavusWarn } from "./tavusDebug";
+import { tavusLog, tavusWarn } from "./tavusDebug";
 
 declare global {
   interface Window {
     __tavusDailyCallObject?: DailyCall | null;
-    __tavusSuppressEndCallback?: boolean;
   }
-}
-
-/** Suppress left-meeting → dismiss while we intentionally tear down the call. */
-export function setSuppressConversationEnd(suppress: boolean): void {
-  window.__tavusSuppressEndCallback = suppress;
-}
-
-export function isConversationEndSuppressed(): boolean {
-  return window.__tavusSuppressEndCallback === true;
 }
 
 /** Tear down the singleton Daily call object (Tavus embed docs pattern). */
-export async function destroyDailyCall(): Promise<void> {
-  const call = window.__tavusDailyCallObject;
+const cleanupTasks = new WeakMap<DailyCall, Promise<void>>();
+export function destroyDailyCall(call = window.__tavusDailyCallObject): Promise<void> {
   if (!call) {
-    return;
+    return Promise.resolve();
   }
-
+  const pending = cleanupTasks.get(call);
+  if (pending) return pending;
   tavusLog("destroying Daily call object");
-  setSuppressConversationEnd(true);
-  try {
-    await call.leave();
-    await call.destroy();
-  } catch (err) {
-    tavusWarn("destroy Daily call failed (may already be gone)", err);
-  } finally {
-    setSuppressConversationEnd(false);
-  }
-
-  window.__tavusDailyCallObject = null;
+  if (window.__tavusDailyCallObject === call) window.__tavusDailyCallObject = null;
+  const task = (async () => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([call.leave(), new Promise<void>((resolve) => { timer = setTimeout(resolve, 2000); })]);
+    } catch {
+      tavusWarn("Daily leave failed; destroying captured call");
+    } finally {
+      clearTimeout(timer);
+      try { await call.destroy(); } catch { tavusWarn("Daily call already destroyed"); }
+    }
+  })();
+  cleanupTasks.set(call, task);
+  return task;
 }
 
 export function getDailyCall(): DailyCall {
   if (!window.__tavusDailyCallObject) {
     tavusLog("creating new Daily call object");
-    window.__tavusDailyCallObject = Daily.createCallObject();
+    // A previous instance may still be finishing asynchronous cleanup.
+    window.__tavusDailyCallObject = Daily.createCallObject({ allowMultipleCallInstances: true });
   }
 
   return window.__tavusDailyCallObject;
