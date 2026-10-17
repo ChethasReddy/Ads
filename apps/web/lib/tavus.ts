@@ -48,8 +48,8 @@ export function classifyViewerSpeech(text: string): ButtonSignal | "question" | 
   const value = text.toLowerCase().replace(/[’]/g, "'").trim();
   if (/\b(don't|do not|can't|cannot|won't|never)\s+(?:\w+\s+)?(?:stop|skip|quit)\b/.test(value)) return null;
   if (/^(?:(?:please|can you|could you|would you|nah|no|okay|ok)[, ]+)*(?:stop|skip|enough|quit)\b/.test(value) ||
-      /\b(no thanks|not now|leave me alone|stop interrupting|(?:want|trying) to watch (?:the )?(?:game|video))\b/.test(value)) return "skip";
-  if (/\b(not relevant|don't need|unrelated|wrong product)\b/.test(value)) return "not_relevant";
+      /\b(no thanks|not now|leave me alone|stop interrupting|(?:don't|do not) want to hear more|(?:want|trying) to watch (?:the )?(?:game|video))\b/.test(value)) return "skip";
+  if (/\b(not (?:really |at all )?interested|not relevant|don't need|unrelated|wrong product)\b/.test(value)) return "not_relevant";
   if (/\b(annoying|annoyed|irritating|irritated)\b/.test(value)) return "annoyed";
   if (/\b(too long|long intro)\b/.test(value)) return "too_long";
   if (/\b(tell me quickly|keep it short|one line|hurry|quick summary)\b/.test(value)) return "tell_me_quickly";
@@ -80,5 +80,6 @@ export async function postJson(path: string, body: unknown, signal?: AbortSignal
   const res = await fetch(path, { method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify(body), signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   if (!res.ok) throw new Error(`Request failed (${res.status})`);
+  if (res.headers.get("x-fallback-used") === "true") throw new Error("Memory persistence was not confirmed");
   return res.json();
 }

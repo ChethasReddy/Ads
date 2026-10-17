@@ -4,6 +4,18 @@ import { TavusConversation } from "../lib/state/tavusConversation";
 afterEach(() => vi.useRealTimers());
 
 describe("live conversation lifecycle", () => {
+  it("preserves a shortening deadline when the replica becomes live", () => {
+    vi.useFakeTimers();
+    const close = vi.fn();
+    const call = new TavusConversation(close, vi.fn());
+    call.start(30);
+    call.shorten();
+    vi.advanceTimersByTime(2000);
+    call.live();
+    vi.advanceTimersByTime(6000);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
+
   it("stops local audio and resumes before any asynchronous cleanup can finish", () => {
     const events: string[] = [];
     const call = new TavusConversation(() => events.push("resume"), () => {

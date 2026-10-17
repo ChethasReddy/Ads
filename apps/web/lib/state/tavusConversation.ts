@@ -5,6 +5,7 @@ export class TavusConversation {
   private liveAt: number | undefined;
   private shortSeconds = 30;
   private engaged = false;
+  private shortenedDeadline: number | undefined;
   private revision = 0;
 
   constructor(
@@ -25,18 +26,20 @@ export class TavusConversation {
   live(): void {
     if (this.ended || this.liveAt !== undefined) return;
     this.liveAt = Date.now();
-    this.deadline(this.liveAt + (this.engaged ? 90 : this.shortSeconds + 8) * 1000);
+    this.deadline(this.shortenedDeadline ?? this.liveAt + (this.engaged ? 90 : this.shortSeconds + 8) * 1000);
   }
 
   engage(source: "button" | "speech" | "question" | "perception"): void {
     if (this.ended || source === "perception") return;
     this.engaged = true;
+    this.shortenedDeadline = undefined;
     if (this.liveAt !== undefined) this.deadline(this.liveAt + 90_000);
   }
 
   shorten(): void {
     this.engaged = false;
-    this.deadline(Math.min(Date.now() + 8_000, (this.liveAt ?? Date.now()) + 90_000));
+    this.shortenedDeadline = Math.min(Date.now() + 8_000, (this.liveAt ?? Date.now()) + 90_000);
+    this.deadline(this.shortenedDeadline);
   }
 
   request(): number { return ++this.revision; }

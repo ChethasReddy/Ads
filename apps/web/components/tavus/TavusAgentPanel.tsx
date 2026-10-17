@@ -6,7 +6,7 @@ import { attachParticipantMedia, destroyDailyCall, getDailyCall, getReplicaParti
 import { classifyViewerSpeech, feedbackMessages, isMockTavusUrl, parseTavusEvent, type FeedbackCommand, type FeedbackSource } from "../../lib/tavus";
 import type { ButtonSignal } from "@ads/core";
 
-export type TavusAgentHandle = { stop: () => void; interrupt: () => void; respond: (command: FeedbackCommand) => void };
+export type TavusAgentHandle = { stop: () => void; interrupt: () => void; clearPending: () => void; respond: (command: FeedbackCommand) => void };
 type Props = {
   ref?: Ref<TavusAgentHandle>;
   conversationUrl: string;
@@ -89,6 +89,7 @@ export function TavusAgentPanel(props: Props) {
   }, [conversationId, detachMedia]);
   useImperativeHandle(ref, () => ({
     stop, interrupt,
+    clearPending() { pendingCommand.current = null; },
     respond(command) {
       if (ended.current || command.id <= lastCommand.current) return;
       lastCommand.current = command.id;
@@ -121,7 +122,10 @@ export function TavusAgentPanel(props: Props) {
     const joinDeadline = setTimeout(fallback, 20_000);
     const handleSpeech = (text: string) => {
       const intent = classifyViewerSpeech(text);
-      if (intent === "question") callbacks.current.onQuestion();
+      if (intent === "question") {
+        pendingCommand.current = null;
+        callbacks.current.onQuestion();
+      }
       else if (intent) callbacks.current.onFeedback(intent, "speech");
     };
     const syncMedia = () => {

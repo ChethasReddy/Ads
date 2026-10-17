@@ -13,7 +13,8 @@ configuration helper, not a deployment script: editing it does not update a
 remote persona. Verify its prompt, microphone/STT settings, and attached audio
 perception tools against the intended configuration in your Tavus account.
 The expected perception tool names are `mark_high_friction`, `mark_rushed`, and
-`mark_engaged`. They map to the same feedback signals as the UI controls.
+`mark_engaged`. Friction and rushed signals use the feedback route. Inferred
+engagement is ignored: it cannot override explicit feedback or lengthen either ad.
 
 Current Tavus documentation uses PAL/face terminology. This repository retains
 its configured persona/replica integration. Check compatibility with the account
@@ -32,8 +33,8 @@ before a separate API migration; do not silently replace working remote IDs.
    stay in the Tavus conversation and opt into bounded follow-up time.
 5. A nonterminal feedback response sends `conversation.interrupt`,
    `conversation.append_llm_context`, then `conversation.echo` containing the
-   exact approved text. The UI displays that answer. Inferred interest updates
-   context only and cannot opt the viewer into a longer ad.
+   exact approved text. The UI displays that answer. Inferred interest is not
+   submitted as explicit interest or stored in history by this frontend.
    Feedback received while Daily connects is held until replica media is ready;
    only the latest approved response is delivered, once.
 6. A hard stop silences/detaches local media and resumes the video before any
@@ -41,7 +42,11 @@ before a separate API migration; do not silently replace working remote IDs.
 
 The backend deterministic planner and browser fallback both use shared core
 functions. If feedback storage fails, the local response still works and the UI
-reports that memory was not confirmed. Negative feedback writes are ordered;
+reports that memory was not confirmed. The feedback route checks that its history
+entry is visible through the same reader used by Ad 2, adding one read per
+feedback with a two-second deadline. A mismatch or write failure sets
+`x-fallback-used: true`, even with HTTP 200; the browser treats this as unconfirmed.
+Negative feedback writes are ordered;
 future automatic ads wait while they are pending, and are suppressed after a
 failure until Start Session resets the demo.
 
@@ -84,7 +89,8 @@ turn for follow-ups, admit unknowns, and avoid restarting the pitch.
 A product question or explicit interested click enables up to 90 seconds from
 first playable media. Later questions cannot reset that cap. Without explicit
 engagement, the server's short duration plus an eight-second grace period applies.
-Shortening feedback returns to an eight-second completion window. Skip/rejection
+Shortening feedback returns to an eight-second completion window, including
+when it arrives before media is ready. Skip/rejection
 always overrides both timers and pending responses.
 
 ## Failure and teardown behavior

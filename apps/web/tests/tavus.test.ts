@@ -76,6 +76,8 @@ describe("classifyViewerSpeech", () => {
   );
   it.each([
     ["Too long", "too_long"], ["Not relevant", "not_relevant"],
+    ["I'm not interested", "not_relevant"], ["I'm not interested in this product", "not_relevant"],
+    ["I don't want to hear more", "skip"],
     ["This is annoying", "annoyed"], ["Tell me quickly", "tell_me_quickly"],
     ["I'm interested", "interested"],
   ])("normalizes explicit feedback: %s", (text, signal) => expect(classifyViewerSpeech(text)).toBe(signal));

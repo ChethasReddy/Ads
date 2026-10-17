@@ -41,8 +41,11 @@ export default function GetStartedPage() {
   const dismissAd = useCallback(() => currentRun.current?.lifecycle.stop(), []);
 
   const sendFeedback = useCallback((signal: ButtonSignal, source: FeedbackSource = "button") => {
+    // Inference is not consent to a longer current or future advertisement.
+    if (source === "perception" && signal === "interested") return;
     const run = currentRun.current;
     if (!run || run.lifecycle.ended) return;
+    panelRef.current?.clearPending();
     const requestId = run.lifecycle.request();
     const sessionId = sessionRef.current;
     const negative = signal !== "interested";

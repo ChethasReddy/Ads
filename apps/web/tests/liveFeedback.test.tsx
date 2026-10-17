@@ -80,6 +80,62 @@ afterEach(async () => {
 });
 
 describe("real page and panel feedback wiring", () => {
+  it("treats not interested as rejection without echoing another pitch", async () => {
+    await start();
+    const call = daily.calls.at(-1)!;
+    await act(async () => {
+      call.emit("app-message", event("conversation.utterance", { role: "user", speech: "I'm not interested" }));
+      await tick();
+    });
+    expect(host.textContent).not.toContain("Tavus live");
+    expect(call.sendAppMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not let inferred interest replace explicit shortening or enter memory", async () => {
+    await start();
+    const call = daily.calls.at(-1)!;
+    await click("Too long");
+    await act(async () => {
+      call.emit("app-message", event("conversation.perception_tool_call", { name: "mark_engaged" }));
+      resolveFeedback!(json({ agentResponse: { strategy: "shorten", script: "Keep it brief.", shouldContinue: true, shouldStop: false, safetyStatus: "allowed" } }));
+      await tick();
+    });
+    expect(feedbackRequests).toHaveLength(1);
+    expect(call.sendAppMessage.mock.calls.some(([message]) => message.properties?.text === "Keep it brief.")).toBe(true);
+  });
+
+  it.each(["Too long", "question"])("invalidates queued speech as soon as newer %s intent arrives", async (intent) => {
+    daily.ready = false;
+    await start();
+    const call = daily.calls.at(-1)!;
+    await click("I'm interested");
+    await act(async () => {
+      resolveFeedback!(json({ agentResponse: { strategy: "continue", script: "Earlier pitch.", shouldContinue: true, shouldStop: false, safetyStatus: "allowed" } }));
+      await tick();
+    });
+    if (intent === "question") await act(async () => {
+      call.emit("app-message", event("conversation.utterance", { role: "user", speech: "What is the price?" }));
+    });
+    else await click(intent);
+    await act(async () => { daily.ready = true; call.emit("participant-updated"); });
+    expect(call.sendAppMessage.mock.calls.some(([message]) => message.properties?.text === "Earlier pitch.")).toBe(false);
+  });
+
+  it("suppresses the next ad when the API returns HTTP 200 with unconfirmed memory", async () => {
+    await start();
+    await click("Skip this");
+    await act(async () => {
+      resolveFeedback!(new Response(JSON.stringify({ agentResponse: { strategy: "stop", script: "Stopped.", shouldContinue: false, shouldStop: true, safetyStatus: "allowed" } }), { headers: { "x-fallback-used": "true" } }));
+      await tick();
+    });
+    await act(async () => {
+      const video = host.querySelector("video")!;
+      video.currentTime = 40; video.dispatchEvent(new Event("timeupdate", { bubbles: true }));
+      await tick();
+    });
+    expect(daily.calls).toHaveLength(1);
+  });
+
   it("keeps the new live call working after Strict Mode cleans up its first mount", async () => {
     await act(async () => root.render(<StrictMode><Page /></StrictMode>));
     await start();
