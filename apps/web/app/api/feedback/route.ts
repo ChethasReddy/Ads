@@ -14,6 +14,7 @@ import {
 } from "@ads/core";
 import {
   getAgentMemoryProvider,
+  getArcEntries,
   storeArcEntry,
   storePreference,
 } from "@ads/integrations";
@@ -79,12 +80,29 @@ export async function POST(request: Request): Promise<NextResponse> {
     await provider.appendFeedback(sessionId, feedback);
     await provider.setSessionMode(sessionId, memoryUpdate.currentMode);
 
-    await storeArcEntry(sessionId, {
+    const arcEntry = {
       adIndex: 0,
       emotionSignal: analysis.emotionSignal,
       adCategory: adCategory ?? "unknown",
       timestamp: new Date().toISOString(),
-    });
+    };
+    await storeArcEntry(sessionId, arcEntry);
+
+    // A provider can fall back locally while Ad 2 still reads older remote history.
+    // Confirm through that same reader before allowing another automatic ad.
+    let readTimer: ReturnType<typeof setTimeout> | undefined;
+    const visibleHistory = await Promise.race([
+      getArcEntries(sessionId),
+      new Promise<never>((_, reject) => { readTimer = setTimeout(() => reject(new Error("History confirmation timed out")), 2000); }),
+    ]).finally(() => clearTimeout(readTimer));
+    // Iris assigns its own createdAt during store; local memory preserves ours.
+    const writeStartedAt = Date.parse(arcEntry.timestamp);
+    const confirmedAt = Date.now();
+    if (!visibleHistory.some(entry => Date.parse(entry.timestamp) >= writeStartedAt &&
+      Date.parse(entry.timestamp) <= confirmedAt && entry.emotionSignal === arcEntry.emotionSignal &&
+      entry.adCategory === arcEntry.adCategory && entry.adIndex === arcEntry.adIndex)) {
+      providerFailed = true;
+    }
 
     for (const pref of memoryUpdate.allowedPreferences) {
       await storePreference(sessionId, pref);

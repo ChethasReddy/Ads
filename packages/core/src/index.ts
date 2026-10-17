@@ -1,6 +1,15 @@
 export * from "./schemas";
 export * from "./fixtures";
-export type { ArcEntry, AdFixture } from "./fixtures/knicksGame";
+export type { ArcEntry, AdFixture, Ad2ArcTier } from "./fixtures/knicksGame";
+export {
+  AD_SLOT_1,
+  AD_SLOT_2,
+  buildAd2Context,
+  classifyAd2Arc,
+  getAd2DurationSeconds,
+  knicksVideoContext,
+  PRODUCT_ANSWER_RULES,
+} from "./fixtures/knicksGame";
 export { classifyFeedback, SAFE_SCRIPTS } from "./classifier/classifyFeedback";
 export {
   planSafeResponse,

@@ -1,135 +1,104 @@
-import type { AdCandidate } from "../schemas/context";
+import type { AdCandidate, VideoContext } from "../schemas/context";
 
-/**
- * Live NBA Finals broadcast ad system. The broadcast has exactly two hardcoded
- * ad slots. AD_SLOT_1 fires at the first natural break; AD_SLOT_2 fires at
- * halftime and adapts to how the viewer reacted during AD_SLOT_1.
- *
- * No LLM is involved. Slot content and Ad-2 adaptation are deterministic so the
- * broadcast demo is stable for judges.
- */
-
-/**
- * A single hardcoded broadcast ad slot.
- *
- * - `adIndex`      0 for the first slot, 1 for the second.
- * - `triggerMoment` the in-game broadcast beat that cues the slot.
- * - `tavusContext`  the conversational_context handed to the Tavus agent.
- * - `adCandidate`   the product pitched in this slot.
- */
 export type AdFixture = {
   adIndex: number;
+  triggerTimeSeconds: number;
   triggerMoment: string;
   tavusContext: string;
+  openingScript: string;
   adCandidate: AdCandidate;
 };
 
-/**
- * One recorded interaction from a prior ad slot, used to make AD_SLOT_2
- * arc-aware. `emotionSignal` mirrors FrictionAnalysis.emotionSignal (kept as a
- * string so the arc store stays decoupled from the friction schema).
- * `timestamp` is an ISO string captured when the feedback was classified.
- */
 export type ArcEntry = {
   adIndex: number;
   emotionSignal: string;
   adCategory: string;
   timestamp: string;
 };
+export type Ad2ArcTier = "frustrated" | "engaged" | "default";
+
+export const knicksVideoContext: VideoContext = {
+  id: "knicks-finals-game2",
+  title: "Knicks basketball — recorded demo clip",
+  topic: "Basketball broadcast demo",
+  tags: ["nba", "knicks", "basketball", "demo"],
+  transcriptSnippet: "A recorded basketball clip with two illustrative ad breaks.",
+  viewerMode: "focused",
+  interruptionRisk: "high",
+  recommendedAdStyle: "short_utility",
+};
+
+/** Shared grounding policy for every broadcast slot, including follow-up turns. */
+export const PRODUCT_ANSWER_RULES = [
+  "This is an illustrative demo, not a real store or a live broadcast. Product names are demo labels, not verified retail listings or endorsements.",
+  "Answer the viewer's current question directly in one or two short sentences. Use prior turns to resolve follow-up questions; do not restart the opening pitch.",
+  "Only use the supplied product facts. Price, sizes, stock, shipping, discounts, purchase links and exact technical specifications are unknown unless explicitly provided. Say you do not know missing facts; never invent an offer or a checkout link.",
+  "If the viewer asks about another product or corrects you, acknowledge and clarify briefly. Do not claim to see their screen or know anything beyond the supplied recorded demo context.",
+  "If the viewer explicitly says stop, skip, no thanks, enough, or wants to watch the game, stop immediately with no closing sales pitch. Do not add a product name, link or offer. If annoyed, acknowledge once and reduce pressure. Inferred engagement is not permission for a longer pitch.",
+].join("\n");
+
+const shoe: AdCandidate = {
+  id: "nike-air-zoom-anunoby",
+  productName: "Nike Air Zoom Flight",
+  category: "basketball_shoe",
+  pitchAngle: "An illustrative neon-green basketball shoe concept tied to the on-screen play.",
+  defaultLengthSeconds: 30,
+  relevanceReason: "A basketball shoe concept during a recorded basketball clip; exact player equipment is not verified.",
+};
+const jersey: AdCandidate = {
+  id: "knicks-finals-jersey",
+  productName: "Official Knicks Finals Jersey",
+  category: "team_jersey",
+  pitchAngle: "An illustrative Knicks team jersey concept for basketball fans.",
+  defaultLengthSeconds: 15,
+  relevanceReason: "A Knicks jersey concept during the closing moment of the recorded demo clip.",
+};
 
 export const AD_SLOT_1: AdFixture = {
   adIndex: 0,
-  triggerMoment:
-    "First official timeout, end of the 1st quarter — Knicks lead the Finals opener 28-24 at the Garden.",
-  tavusContext:
-    "You are a calm, respectful courtside ad agent during the NBA Finals. " +
-    "The viewer is locked into a tight Knicks game, so keep it short and " +
-    'utility-first. Open with this line: "Great quarter to be a Knicks fan. ' +
-    "Quick heads-up while they reset — StatStream gives you live shot charts " +
-    'and player matchups in one tap, no channel surfing." ' +
-    "If the viewer sounds annoyed, rushed, or uninterested, acknowledge once, " +
-    "shorten or stop, and never intensify persuasion.",
-  adCandidate: {
-    id: "statstream-live",
-    productName: "StatStream",
-    category: "Sports & live stats app",
-    pitchAngle:
-      "Live shot charts and player matchups during the game without leaving the broadcast.",
-    defaultLengthSeconds: 20,
-    relevanceReason:
-      "The viewer is watching a close Finals game and may want live stats during natural breaks.",
-  },
+  triggerTimeSeconds: 19,
+  triggerMoment: "A basketball play at the 19-second mark of the recorded clip.",
+  openingScript: "This demo pairs the basketball play with Nike Air Zoom Flight, an illustrative neon-green shoe concept. I can answer a quick question, or you can skip.",
+  tavusContext: [
+    PRODUCT_ANSWER_RULES,
+    "Demo product: Nike Air Zoom Flight. Category: basketball shoe. Demo color: neon green. Exact player, shoe identification and performance specifications are not verified.",
+    "The recorded clip has reached a basketball play at 19 seconds. Wait for the viewer to speak, then introduce the demo concept briefly. If they start with a question, answer it instead of pitching.",
+  ].join("\n\n"),
+  adCandidate: shoe,
 };
 
 export const AD_SLOT_2: AdFixture = {
   adIndex: 1,
-  triggerMoment:
-    "Halftime — the Finals opener is tied at the break and the Garden is on its feet.",
-  tavusContext:
-    "You are a calm, respectful courtside ad agent during NBA Finals halftime. " +
-    "The viewer has a few minutes before the second half. Keep it short and " +
-    'utility-first. Open with this line: "Halftime of a tied Finals game — ' +
-    "perfect window. CourtsideEats gets game-night food to your door before " +
-    'the third quarter tips off." ' +
-    "If the viewer sounds annoyed, rushed, or uninterested, acknowledge once, " +
-    "shorten or stop, and never intensify persuasion.",
-  adCandidate: {
-    id: "courtsideeats-delivery",
-    productName: "CourtsideEats",
-    category: "Food delivery",
-    pitchAngle:
-      "Game-night food delivered before the third quarter tips off.",
-    defaultLengthSeconds: 20,
-    relevanceReason:
-      "It is halftime of a live Finals game and the viewer may want food before play resumes.",
-  },
+  triggerTimeSeconds: 39,
+  triggerMoment: "The closing basketball moment at the 39-second mark of the recorded clip.",
+  openingScript: "This demo's second concept is the Official Knicks Finals Jersey. It's an illustrative team jersey, with no verified retail offer.",
+  tavusContext: "", // built from earlier feedback by buildAd2Context
+  adCandidate: jersey,
 };
 
-const AD_2_DE_ESCALATION =
-  "If the viewer sounds annoyed, rushed, or uninterested, acknowledge once, " +
-  "shorten or stop, and never intensify persuasion.";
+export function classifyAd2Arc(arc: ArcEntry[]): Ad2ArcTier {
+  const signals = arc.map((entry) => entry.emotionSignal);
+  if (signals.some((signal) => ["frustrated", "annoyed", "disinterested", "rushed"].includes(signal))) return "frustrated";
+  if (signals.some((signal) => ["engaged", "interested", "curious"].includes(signal))) return "engaged";
+  return "default";
+}
 
-/**
- * Builds the AD_SLOT_2 conversational_context from the viewer's AD_SLOT_1 arc.
- *
- * Three deterministic variants:
- *   1. frustrated / rushed — the viewer pushed back during Ad 1, so this opens
- *      with an explicit "Quick one" and offers an immediate exit.
- *   2. engaged — the viewer leaned in during Ad 1, so continue warmly.
- *   3. no prior interaction — empty arc, so fall back to the neutral default.
- */
+export function getAd2DurationSeconds(arc: ArcEntry[]): number {
+  switch (classifyAd2Arc(arc)) {
+    case "frustrated": return 10;
+    case "engaged": return 22;
+    default: return 18;
+  }
+}
+
 export function buildAd2Context(arc: ArcEntry[]): string {
-  const signals = new Set(arc.map((entry) => entry.emotionSignal));
-  const priorCategory = arc.length > 0 ? arc[arc.length - 1].adCategory : "unknown";
-
-  if (signals.has("frustrated") || signals.has("rushed")) {
-    return [
-      "You are a calm, respectful courtside ad agent during NBA Finals halftime.",
-      `The viewer pushed back on the last ad (category: ${priorCategory}), so keep pressure low and respect their time.`,
-      'Open with this line: "Quick one, then I\'ll let you enjoy halftime — ' +
-        'CourtsideEats can have game-night food at your door before the third ' +
-        'quarter. Want it, or should I drop it?"',
-      AD_2_DE_ESCALATION,
-    ].join("\n\n");
-  }
-
-  if (signals.has("engaged")) {
-    return [
-      "You are a calm, respectful courtside ad agent during NBA Finals halftime.",
-      "The viewer engaged with the last ad, so it is fine to continue warmly and briefly.",
-      'Open with this line: "Glad that was useful earlier. Since it is halftime, ' +
-        "CourtsideEats can get game-night food to your door before the third " +
-        'quarter tips off."',
-      AD_2_DE_ESCALATION,
-    ].join("\n\n");
-  }
-
+  const tier = classifyAd2Arc(arc);
   return [
-    "You are a calm, respectful courtside ad agent during NBA Finals halftime.",
-    "No prior ad interaction this session, so introduce the offer neutrally and keep it short.",
-    'Open with this line: "Halftime of a tied Finals game — perfect window. ' +
-      "CourtsideEats gets game-night food to your door before the third quarter " +
-      'tips off."',
-    AD_2_DE_ESCALATION,
+    PRODUCT_ANSWER_RULES,
+    "Demo product: Official Knicks Finals Jersey. Category: team jersey. Team: New York Knicks. The word Official is part of the illustrative product label, not verified licensing. This is the second ad in the recorded basketball clip.",
+    tier === "frustrated"
+      ? "The earlier feedback requested less interruption. Keep any introduction to one short sentence. If the viewer pushes back, stop immediately."
+      : "Keep the introduction short. Prior positive signals do not authorize a longer pitch; wait for an explicit question or request for more detail.",
+    "Answer follow-up questions about this jersey using only the demo facts. If asked about the earlier shoe concept, distinguish the two products and admit unknown details.",
   ].join("\n\n");
 }

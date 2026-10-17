@@ -80,6 +80,28 @@ export const PERSONA_CATALOG: Record<string, AdPersonaConfig> = {
       "office",
     ],
   },
+  sports: {
+    key: "sports",
+    label: "Sports & Live Broadcast Agent",
+    personaId: "",
+    replicaId: "",
+    systemStyle:
+      "You are a calm, respectful courtside ad agent during a live sports " +
+      "broadcast. Keep pitches short, contextual to the moment on screen, and " +
+      "never interrupt the game longer than necessary.",
+    matchKeywords: [
+      "basketball",
+      "basketball_shoe",
+      "team_jersey",
+      "jersey",
+      "shoe",
+      "nba",
+      "knicks",
+      "sports",
+      "finals",
+      "broadcast",
+    ],
+  },
   default: {
     key: "default",
     label: "General Respectful Ad Agent",
@@ -93,7 +115,7 @@ export const PERSONA_CATALOG: Record<string, AdPersonaConfig> = {
 };
 
 /** Catalog keys checked, in priority order, before falling back to default. */
-const MATCH_ORDER = ["developer_tool", "productivity"] as const;
+const MATCH_ORDER = ["developer_tool", "productivity", "sports"] as const;
 
 function envId(prefix: "TAVUS_PERSONA_ID" | "TAVUS_REPLICA_ID", key: string): string {
   return process.env[`${prefix}_${key.toUpperCase()}`] ?? "";
@@ -147,5 +169,6 @@ export function buildConversationalContext(input: {
       `Pitch angle: ${adCandidate.pitchAngle}. Why it is relevant: ${adCandidate.relevanceReason}.`,
     `Open with this line: ${openingScript}`,
     DE_ESCALATION_RULE,
+    "Answer the current question and follow-up questions in one or two sentences using only supplied facts. Do not restart the pitch. Price, stock, sizes and shipping are unknown unless supplied: say you do not know rather than invent an offer. On stop or skip, stop immediately with no final sales pitch.",
   ].join("\n\n");
 }

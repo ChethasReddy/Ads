@@ -17,7 +17,7 @@
  *     POSTed to /api/feedback) produces the annoyed outcome in memory.
  *   - Raven-1 mark_engaged via /api/feedback does not block on safety.
  *   - Arc-aware AD_SLOT_2: a 'frustrated' feedback then POST /api/tavus/session
- *     adIndex 1 returns a fallbackAgentScript containing "Quick one".
+ *     adIndex 1 returns a short duration and a viewer-facing demo script.
  *
  * Raven-1 perception tool calls reach the browser over Daily.js, not a backend
  * webhook. The frontend maps tool_name -> buttonSignal and calls /api/feedback
@@ -282,7 +282,7 @@ assert(
 // 10. Arc-aware AD_SLOT_2: frustrated feedback during Ad 1 makes the Ad 2
 //     context builder run. A POST /api/feedback (emotionSignal 'frustrated',
 //     via the annoyed button) followed by POST /api/tavus/session adIndex 1
-//     must return a fallbackAgentScript containing "Quick one".
+//     must return a 10-second ad budget and a clean viewer-facing script.
 const arcSessionId = `smoke-arc-${Date.now()}`;
 console.log("POST /api/feedback (annoyed -> emotionSignal 'frustrated')");
 const arcFeedback = await post("/api/feedback", {
@@ -310,8 +310,10 @@ const ad2Session = await post("/api/tavus/session", {
 assert(ad2Session.status === 200, "status 200", ad2Session);
 assert(
   typeof ad2Session.json.fallbackAgentScript === "string" &&
-    ad2Session.json.fallbackAgentScript.includes("Quick one"),
-  'adIndex 1 fallbackAgentScript contains "Quick one" (arc-aware context ran)',
+    ad2Session.json.fallbackAgentScript.includes("illustrative") &&
+    ad2Session.json.adDurationSeconds === 10 &&
+    !ad2Session.json.fallbackAgentScript.includes("CRITICAL"),
+  'adIndex 1 is short and exposes only viewer-facing fallback speech',
   ad2Session.json,
 );
 

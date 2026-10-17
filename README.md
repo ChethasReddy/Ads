@@ -12,8 +12,8 @@ manipulation. The goal is respectful, viewer-controlled advertising.
 
 ## 60-second demo flow
 
-The full loop runs in 60–90 seconds and presents in under 3 minutes. It mirrors
-the staged flow in `AGENTS.md` §7:
+The intended full loop runs in 60–90 seconds and presents in under 3 minutes.
+It mirrors the staged flow in `AGENTS.md` §7:
 
 1. **Landing** — Hero line "Ads should understand the moment, not interrupt it."
    with a single `Start Demo` call to action.
@@ -28,7 +28,8 @@ the staged flow in `AGENTS.md` §7:
    `I'm annoyed`, `Tell me quickly`, `I'm interested`, `Skip this`) plus optional
    voice. In parallel, Raven-1 perception watches tone in real time; its tool
    calls arrive in the browser via Daily.js and feed the same `/api/feedback`
-   route as the buttons.
+   route as the buttons for friction and rushed signals. Inferred engagement
+   alone is ignored and cannot lengthen an ad.
 6. **Friction detection** — The feedback is classified into friction level,
    emotion signal, intent, ad risk, and a recommended action.
 7. **Adaptive response** — The agent shortens, clarifies, stops, or continues —
@@ -43,7 +44,7 @@ the staged flow in `AGENTS.md` §7:
 
 ```bash
 # 1. Configure environment (defaults run the full demo with zero external APIs)
-cp .env.example .env
+cp .env.example apps/web/.env.local
 
 # 2. Install (npm workspaces — this repo uses npm, not pnpm)
 npm install
@@ -55,9 +56,10 @@ npm run dev
 node apps/web/scripts/smoke.mjs
 ```
 
-The demo is built to run fully offline. With no Tavus and no Redis credentials,
-the app falls back to a scripted mock agent and in-memory preference storage,
-and every API route returns a typed fallback instead of failing.
+The demo is built to run offline. With the Tavus and Redis provider switches
+disabled, the app falls back to a scripted mock agent and in-memory preference
+storage. `NEXT_PUBLIC_DEMO_MODE` alone does not disable configured providers.
+Next reads environment variables from `apps/web/.env.local`.
 
 To run with real Tavus, set `TAVUS_API_KEY`, `TAVUS_REPLICA_ID`,
 `TAVUS_PERSONA_ID`, and `NEXT_PUBLIC_TAVUS_ENABLED=true`. The persona referenced
@@ -70,24 +72,43 @@ received client-side over Daily.js, so no inbound webhook URL is required.
 
 | Layer | Choice | Notes |
 | --- | --- | --- |
-| AI video agent | **Tavus CVI** | `POST /v2/conversations`, raw `fetch`, no SDK. The frontend embeds the returned `conversation_url` in an iframe. |
-| Perception | **Tavus Raven-1** | Multimodal perception reads vocal tone in real time and fires `mark_high_friction` / `mark_engaged` / `mark_rushed` audio tools. Tool calls arrive in the browser over Daily.js (`app-message`), are mapped to button signals, and POST to `/api/feedback` exactly like a click. Replaces text-based emotion classification. |
-| Memory | **Upstash Redis** (`@upstash/redis`, REST) | Stores safe preferences and session mode. Falls back to an in-memory provider when credentials are absent. |
+| AI video agent | **Tavus CVI** | `POST /v2/conversations`, raw `fetch`, no SDK. The frontend joins the returned `conversation_url` with Daily.js and renders its audio/video tracks. |
+| Perception | **Tavus Raven-1** | Multimodal perception reads vocal tone in real time and fires `mark_high_friction` / `mark_engaged` / `mark_rushed` audio tools. Tool calls arrive over Daily.js (`app-message`). Friction/rushed signals enter `/api/feedback`; inferred engagement is ignored. Final user transcripts also support explicit feedback and product questions. |
+| Memory | **Redis Iris** (current adapter) | Stores preferences, session mode, and interaction history with an in-memory fallback. `AGENTS.md` specifies Upstash; that migration is not part of these fixes. |
 | Safety | **Deterministic safety planner** | Pure, unit-tested functions in `@ads/core`. No model is in the correctness or safety path. |
 
 Stack rules (from `AGENTS.md` §5 and `CLAUDE.md`): npm workspaces with
 `apps/web` + `packages/core` + `packages/integrations`; Zod for runtime
 validation; no second Redis client, no LLM SDK, no Tavus SDK.
 
+### Current integration details
+
+- `/get-started` currently uses the basketball clip with ad markers at 19 and
+  39 seconds; the staged flow above remains the product specification.
+- Feedback interrupts the live agent, appends safe context, and speaks the
+  approved product-specific response. Skip immediately silences local media and
+  resumes the video, including during connection or a pending feedback request.
+- Explicit product questions or interested clicks allow follow-ups for at most
+  90 seconds from playable media. Product briefs identify illustrative facts and
+  unknown retail details instead of supplying unverified offers.
+- Pending negative-feedback writes defer the next automatic ad; unconfirmed
+  history persistence suppresses it for the session.
+- Run `npm test`, `npm run typecheck`, `npm run lint`, and `npm run build` for
+  automated checks. Live speech quality still needs a microphone replay.
+
+See [the Tavus integration guide](docs/tavus.md) for event schemas, lifecycle
+limits, troubleshooting, and the live replay checklist.
+
 ## Safety story
 
-Raven-1 detects emotion in real time, but **no emotion label is ever persisted
-in Redis**. What persists is the resulting *preference* — shorter ads, lower
+The safety policy is to store ad-experience *preferences* — shorter ads, lower
 interruption frequency, direct utility pitches — never a psychological profile
-or a "this viewer is vulnerable" inference. Every feedback event, whether a
-button click or a Raven-1 tool call, runs through the same deterministic
+or a "this viewer is vulnerable" inference. The current history adapter still
+stores emotion signals; this remains an implementation gap against that policy.
+Every handled feedback event, whether a button click or a Raven-1 tool call,
+runs through the same deterministic
 pipeline: classify friction, plan a safe response, build a memory update, then a
 safety check that rewrites any response that would increase pressure and blocks
 any unsafe label before it can reach storage. The blocked unsafe labels are
-surfaced through the API and shown in the UI on purpose: the boundary is a
-feature, and we prove it rather than assert it.
+surfaced through the API so the UI can explain the boundary. The current memory
+and next-ad panels are placeholders, and Clear is not yet wired.
