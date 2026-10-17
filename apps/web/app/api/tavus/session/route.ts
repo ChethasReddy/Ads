@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   AD_SLOT_1,
+  AD_SLOT_2,
+  knicksVideoContext,
   AdCandidateSchema,
   VideoContextSchema,
   buildAd2Context,
@@ -20,7 +22,7 @@ const TavusSessionRequestSchema = z.object({
   videoContext: VideoContextSchema,
   adCandidate: AdCandidateSchema,
   openingScript: z.string().min(1),
-  adIndex: z.number().optional(),
+  adIndex: z.union([z.literal(0), z.literal(1)]).optional(),
   tavusContext: z.string().optional(),
 });
 
@@ -49,32 +51,34 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const { sessionId, videoContext, adCandidate, openingScript, adIndex } =
     parsed.data;
-  const fallbacksEnabled = process.env.ENABLE_PROVIDER_FALLBACKS !== "false";
   const provider = getTavusProvider();
 
   // Resolve the conversational_context for the two-slot broadcast. AD_SLOT_2
   // (adIndex 1) is arc-aware: it reads the viewer's AD_SLOT_1 interactions and
   // adapts the pitch. Both slot paths override any passed openingScript /
   // tavusContext. When adIndex is absent we keep the legacy openingScript path.
-  let effectiveScript = openingScript;
+  const slot = adIndex === 0 ? AD_SLOT_1 : adIndex === 1 ? AD_SLOT_2 : undefined;
+  const effectiveScript = slot?.openingScript ?? openingScript;
+  let conversationalContext = slot?.tavusContext;
   let adDurationSeconds: number | undefined;
-  if (adIndex === 1) {
-    const arc = await getArcEntries(sessionId);
-    effectiveScript = buildAd2Context(arc);
-    adDurationSeconds = getAd2DurationSeconds(arc);
-  } else if (adIndex === 0) {
-    effectiveScript = AD_SLOT_1.tavusContext;
-    adDurationSeconds = AD_SLOT_1.adCandidate.defaultLengthSeconds;
-  }
-
   try {
+    if (adIndex === 1) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const arc = await Promise.race([
+        getArcEntries(sessionId),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("Memory deadline")), 2000); }),
+      ]).finally(() => clearTimeout(timer));
+      conversationalContext = buildAd2Context(arc);
+      adDurationSeconds = getAd2DurationSeconds(arc);
+    } else if (slot) {
+      adDurationSeconds = slot.adCandidate.defaultLengthSeconds;
+    }
     const result = await provider.createSession({
       sessionId,
-      videoContext,
-      adCandidate,
+      videoContext: slot ? knicksVideoContext : videoContext,
+      adCandidate: slot?.adCandidate ?? adCandidate,
       openingScript: effectiveScript,
-      conversationalContext:
-        adIndex === 0 || adIndex === 1 ? effectiveScript : undefined,
+      conversationalContext,
     });
     return NextResponse.json({ ...result, adDurationSeconds });
   } catch (err) {
@@ -84,14 +88,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     // Demo-critical route: never 500. Degrade to the scripted mock agent so
     // the frontend keeps the Tavus-style experience intact (AGENTS.md §9.1).
-    if (fallbacksEnabled) {
-      return NextResponse.json(
-        { ...mockResult(sessionId, effectiveScript), adDurationSeconds },
-        {
-          headers: { "x-fallback-used": "true" },
-        },
-      );
-    }
     return NextResponse.json(
       { ...mockResult(sessionId, effectiveScript), adDurationSeconds },
       {

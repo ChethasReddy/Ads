@@ -107,9 +107,9 @@ export class RealTavusProvider implements TavusProvider {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs);
 
-    let response: Response;
+    let data: TavusConversationResponse;
     try {
-      response = await fetch(TAVUS_ENDPOINT, {
+      const response = await fetch(TAVUS_ENDPOINT, {
         method: "POST",
         headers: {
           "x-api-key": this.options.apiKey,
@@ -118,15 +118,12 @@ export class RealTavusProvider implements TavusProvider {
         body: JSON.stringify(body),
         signal: controller.signal,
       });
+      if (!response.ok) throw new Error(`Tavus create-conversation failed: ${response.status}`);
+      data = (await response.json()) as TavusConversationResponse;
     } finally {
       clearTimeout(timer);
     }
 
-    if (!response.ok) {
-      throw new Error(`Tavus create-conversation failed: ${response.status}`);
-    }
-
-    const data = (await response.json()) as TavusConversationResponse;
     if (!data.conversation_url || !data.conversation_id) {
       throw new Error("Tavus response missing conversation_url or conversation_id");
     }

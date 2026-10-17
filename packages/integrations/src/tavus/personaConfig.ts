@@ -169,5 +169,6 @@ export function buildConversationalContext(input: {
       `Pitch angle: ${adCandidate.pitchAngle}. Why it is relevant: ${adCandidate.relevanceReason}.`,
     `Open with this line: ${openingScript}`,
     DE_ESCALATION_RULE,
+    "Answer the current question and follow-up questions in one or two sentences using only supplied facts. Do not restart the pitch. Price, stock, sizes and shipping are unknown unless supplied: say you do not know rather than invent an offer. On stop or skip, stop immediately with no final sales pitch.",
   ].join("\n\n");
 }
